@@ -6,13 +6,13 @@ from google.genai import types
 
 class RubricFormatterAgent:
     """
-    Specialized agent for formatting rubrics.
-    ADK Pattern: Single-responsibility agent with tool-like behavior.
+    Specialized agent for formatting rubrics (ADK Day 1 pattern).
+    Single-responsibility agent with tool-like behavior.
     """
 
     def __init__(self, client: genai.Client):
         self.client = client
-        self.model = "gemini-2.5-flash-lite"
+        self.model = "gemini-2.5-flash-lite"  # Latest model
         print("  ✓ RubricFormatter Agent initialized")
 
     def format_rubric(self, raw_rubric_data: str) -> dict:
@@ -21,7 +21,7 @@ class RubricFormatterAgent:
         Uses JSON mode for reliable parsing.
         """
 
-        system_instruction = """You are a rubric formatting specialist. Your job is to convert raw rubric data into clean, structured JSON.
+        system_instruction = """You are a rubric formatting specialist. Convert raw rubric data into clean, structured JSON.
 
 CRITICAL REQUIREMENTS:
 1. Return ONLY valid JSON (no markdown, no explanations)
@@ -63,11 +63,15 @@ Convert this into the structured JSON format. Include ALL information."""
                 ],
                 config=types.GenerateContentConfig(
                     temperature=0.1,
-                    response_mime_type="application/json",  # Force JSON output
+                    response_mime_type="application/json",  # Force JSON
                 ),
             )
 
-            # Parse and validate JSON
+            # Safety checks
+            if not response or not response.text:
+                raise ValueError("Empty response from API")
+
+            # Parse JSON
             result = json.loads(response.text)
 
             if "criteria" not in result:
@@ -77,7 +81,8 @@ Convert this into the structured JSON format. Include ALL information."""
 
         except json.JSONDecodeError as e:
             print(f"    ❌ JSON parse error: {e}")
-            print(f"    Response was: {response.text[:200]}...")
+            if response and response.text:
+                print(f"    Response was: {response.text[:200]}...")
             raise
         except Exception as e:
             print(f"    ❌ Formatting error: {e}")
