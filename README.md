@@ -88,7 +88,12 @@ git clone https://github.com/your-username/transcript-scorer.git
 cd transcript-scorer
 ```
 
-### **2. Install Dependencies**
+### 2. Install Dependencies
+
+Make sure you have **uv** installed first:  
+https://docs.astral.sh/uv/getting-started/installation/
+
+Once uv is installed, run:
 
 ```bash
 uv sync
@@ -105,13 +110,13 @@ GOOGLE_API_KEY=your_key_here
 ### **4. Run the Streamlit App**
 
 ```bash
-streamlit run app.py
+uv run streamlit run app.py
 ```
 
 ### **5. Run the FastAPI Server**
 
 ```bash
-uvicorn api.main:app --reload
+uv run uvicorn api.main:app --reload
 ```
 
 ---
