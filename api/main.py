@@ -2,13 +2,21 @@ import os
 import sys
 from typing import List, Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from dotenv import load_dotenv
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
+
+load_dotenv()
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from agents.orchestrator import OrchestratorAgent
+
+# Initialize rate limiter
+limiter = Limiter(key_func=get_remote_address)
 
 app = FastAPI(
     title="Transcript Scorer API",
@@ -16,11 +24,25 @@ app = FastAPI(
     version="1.0.0",
 )
 
+# Add rate limiter to app state
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# CORS - Only allow specific domains
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "").split(",")
+
+# If empty in .env, default to localhost for development
+if not ALLOWED_ORIGINS or ALLOWED_ORIGINS == [""]:
+    ALLOWED_ORIGINS = [
+        "http://localhost:8501",  # Local Streamlit
+        "http://localhost:3000",  # Local dev
+    ]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,  # Only these domains can call your API
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["POST", "GET"],  # Limit methods
     allow_headers=["*"],
 )
 
@@ -48,17 +70,21 @@ print("✓ API ready\n")
 
 
 @app.get("/")
-async def root():
+@limiter.limit("30/minute")
+async def root(request: Request):
+    """Root endpoint - API health check"""
     return {
         "message": "Transcript Scorer API (ADK Pattern)",
         "status": "running",
         "version": "1.0.0",
-        "features": ["retry_logic", "multi_agent", "error_handling"],
+        "features": ["retry_logic", "multi_agent", "error_handling", "rate_limiting"],
     }
 
 
 @app.post("/score", response_model=ScoringResponse)
+@limiter.limit("10/minute")  # 10 requests per minute per IP
 async def score_transcript(
+    request: Request,  # Required for rate limiting
     transcript: Optional[str] = Form(None),
     transcript_file: Optional[UploadFile] = File(None),
     rubric_file: Optional[UploadFile] = File(None),
@@ -66,8 +92,8 @@ async def score_transcript(
 ):
     """
     Score transcript with ADK multi-agent orchestration and retry logic.
+    Rate limited to 10 requests per minute per IP.
     """
-
     try:
         # Validate input
         if not transcript and not transcript_file:
@@ -103,10 +129,13 @@ async def score_transcript(
 
 
 @app.get("/health")
-async def health_check():
+@limiter.limit("30/minute")
+async def health_check(request: Request):
+    """Health check endpoint"""
     return {
         "status": "healthy",
         "orchestrator": "initialized",
         "agents": ["formatter", "scorer"],
         "retry_enabled": True,
+        "rate_limiting": "enabled",
     }

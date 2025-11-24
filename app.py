@@ -1,23 +1,42 @@
 import json
+import os
 
 import requests
 import streamlit as st
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# Get API URL from environment variable (hidden from UI)
+API_URL = os.getenv("API_URL", "http://localhost:8000")
 
 # Page config
 st.set_page_config(page_title="Transcript Scorer", page_icon="📝", layout="wide")
 
 # Title and description
 st.title("📝 Transcript Scoring Tool")
-st.markdown("""
+st.markdown(
+    """
 Score self-introduction transcripts using AI-powered rubric evaluation.
 Upload a transcript and get detailed feedback on communication skills.
-""")
-
-# Sidebar for configuration
-st.sidebar.header("⚙️ Configuration")
-api_url = st.sidebar.text_input(
-    "API Endpoint", value="http://localhost:8000/score", help="FastAPI backend URL"
+"""
 )
+
+# Sidebar - NO API URL VISIBLE
+st.sidebar.header("⚙️ Configuration")
+
+# Connection status (hidden API URL)
+with st.sidebar:
+    st.markdown("---")
+    st.markdown("**Connection Status:**")
+    try:
+        health_check = requests.get(f"{API_URL}/health", timeout=5)
+        if health_check.status_code == 200:
+            st.success("✅ API Connected")
+        else:
+            st.error("❌ API Error")
+    except:
+        st.error("❌ Cannot reach API")
 
 # Main content
 col1, col2 = st.columns([2, 1])
@@ -27,7 +46,9 @@ with col1:
 
     # Input method selection
     input_method = st.radio(
-        "Choose input method:", ["✍️ Text Area", "📁 Upload File"], horizontal=True
+        "Choose input method:",
+        ["✍️ Text Area", "📁 Upload File"],
+        horizontal=True,
     )
 
     transcript_text = None
@@ -123,8 +144,13 @@ if score_button:
                         rubric_file.type,
                     )
 
-                # Make API request
-                response = requests.post(api_url, data=data, files=files)
+                # Make API request (using hidden API_URL from env)
+                response = requests.post(
+                    f"{API_URL}/score",
+                    data=data,
+                    files=files,
+                    timeout=120,  # 2 minute timeout
+                )
 
                 if response.status_code == 200:
                     result = response.json()
@@ -198,7 +224,6 @@ if score_button:
                             # Details
                             if criterion.get("details"):
                                 st.markdown("**🔍 Details:**")
-
                                 details = criterion["details"]
 
                                 # Keywords found
@@ -228,14 +253,24 @@ if score_button:
                         mime="application/json",
                     )
 
+                elif response.status_code == 429:
+                    st.error(
+                        "⚠️ Rate limit exceeded. Please wait a moment and try again."
+                    )
+
                 else:
                     st.error(f"❌ Error: {response.status_code}")
-                    st.json(response.json())
+                    try:
+                        st.json(response.json())
+                    except:
+                        st.text(response.text)
+
+            except requests.exceptions.Timeout:
+                st.error("⏱️ Request timeout. The transcript may be too long.")
 
             except requests.exceptions.ConnectionError:
-                st.error(
-                    "❌ Cannot connect to API. Make sure the FastAPI server is running on http://localhost:8000"
-                )
+                st.error("❌ Cannot connect to API. Please contact support.")
+
             except Exception as e:
                 st.error(f"❌ Error: {str(e)}")
 
@@ -243,9 +278,9 @@ if score_button:
 st.markdown("---")
 st.markdown(
     """
-<div style='text-align: center; color: gray;'>
-    <small>Powered by Google Gemini AI | Built with Streamlit & FastAPI</small>
-</div>
-""",
+    <div style='text-align: center'>
+        <p>Powered by Google Gemini ADK | Built with FastAPI & Streamlit</p>
+    </div>
+    """,
     unsafe_allow_html=True,
 )
