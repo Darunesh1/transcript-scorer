@@ -99,7 +99,7 @@ uv sync
 Add your Gemini LLM keys to the `.env` file:
 
 ```
-OPENAI_API_KEY=your_key_here
+GOOGLE_API_KEY=your_key_here
 ```
 
 ### **4. Run the Streamlit App**
