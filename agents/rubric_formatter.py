@@ -12,7 +12,7 @@ class RubricFormatterAgent:
 
     def __init__(self, client: genai.Client):
         self.client = client
-        self.model = "gemini-1.5-pro"
+        self.model = "gemini-2.5-flash-lite"
         print("  ✓ RubricFormatter Agent initialized")
 
     def format_rubric(self, raw_rubric_data: str) -> dict:
