@@ -16,14 +16,13 @@ load_dotenv()
 
 class OrchestratorAgent:
     """
-    Orchestrator Agent using ADK patterns from Kaggle Day 5.
-    Coordinates between RubricFormatter and Scorer agents with retry logic.
+    Orchestrator Agent using ADK patterns.
+    Smart rubric loading: skips formatter for pre-formatted default rubric.
     """
 
     def __init__(self):
         print("🚀 Initializing Orchestrator Agent with ADK patterns...")
 
-        # Initialize client with retry options (from ADK best practices)
         self.client = genai.Client(
             api_key=os.getenv("GOOGLE_API_KEY"),
             http_options=types.HttpOptions(
@@ -33,34 +32,38 @@ class OrchestratorAgent:
                     max_delay=10,
                     exp_base=2.0,
                     jitter=0.5,
-                    http_status_codes=[
-                        429,
-                        503,
-                        500,
-                    ],  # Rate limit, unavailable, server error
+                    http_status_codes=[429, 503, 500],
                 )
             ),
         )
 
-        # Initialize sub-agents
-        self.formatter_agent = RubricFormatterAgent(self.client)
+        # Initialize sub-agents (only created when needed)
+        self.formatter_agent = None
         self.scorer_agent = ScoringAgent(self.client)
 
         print("✓ Orchestrator initialized with retry logic")
-        print("✓ Sub-agents: RubricFormatter, Scorer")
+        print("✓ Scorer agent ready")
+
+    def _get_formatter_agent(self):
+        """Lazy load formatter agent (only when needed for custom rubrics)"""
+        if self.formatter_agent is None:
+            print("  → Initializing RubricFormatter agent...")
+            self.formatter_agent = RubricFormatterAgent(self.client)
+        return self.formatter_agent
 
     def process(
         self, transcript_input, rubric_input=None, duration=None, max_retries=3
     ):
         """
-        Main orchestration with retry logic for format errors.
+        Main orchestration with smart rubric handling.
 
-        Workflow (ADK Multi-Agent Pattern):
+        Workflow:
         1. Extract transcript text
-        2. Load rubric data
-        3. Format rubric (Agent 1) with retry
-        4. Score transcript (Agent 2) with retry
-        5. Validate and return results
+        2. Load rubric:
+           - If default → use pre-formatted JSON (skip Agent 1)
+           - If uploaded → format with Agent 1 (with retry)
+        3. Score transcript (Agent 2) with retry
+        4. Validate and return results
         """
         try:
             print("\n" + "=" * 60)
@@ -74,27 +77,22 @@ class OrchestratorAgent:
                 f"✓ Transcript: {len(transcript)} chars, {len(transcript.split())} words"
             )
 
-            # Step 2: Load rubric
+            # Step 2: Load rubric (smart loading)
             print("\n📋 Step 2: Loading rubric...")
-            raw_rubric = self._load_rubric(rubric_input)
-            print(f"✓ Rubric loaded: {len(raw_rubric)} chars")
-
-            # Step 3: Format rubric with retry (Agent 1)
-            print("\n🔧 Step 3: Formatting rubric (Agent 1)...")
-            formatted_rubric = self._format_rubric_with_retry(raw_rubric, max_retries)
+            formatted_rubric = self._load_and_format_rubric(rubric_input, max_retries)
             print(
-                f"✓ Rubric formatted: {len(formatted_rubric.get('criteria', []))} criteria"
+                f"✓ Rubric ready: {len(formatted_rubric.get('criteria', []))} criteria"
             )
 
-            # Step 4: Score with retry (Agent 2)
-            print("\n🎯 Step 4: Scoring transcript (Agent 2)...")
+            # Step 3: Score with retry (Agent 2)
+            print("\n🎯 Step 3: Scoring transcript (Scorer Agent)...")
             results = self._score_with_retry(
                 transcript, formatted_rubric, duration, max_retries
             )
             print(f"✓ Scoring complete: {results['overall_score']:.1f}/100")
 
-            # Step 5: Validate final results
-            print("\n✅ Step 5: Validating results...")
+            # Step 4: Validate final results
+            print("\n✅ Step 4: Validating results...")
             self._validate_results(results)
             print("✓ Validation passed")
 
@@ -115,23 +113,53 @@ class OrchestratorAgent:
         else:
             return extract_text_from_file(transcript_input)
 
-    def _load_rubric(self, rubric_input):
-        """Load rubric from default or uploaded source."""
+    def _load_and_format_rubric(self, rubric_input, max_retries: int) -> dict:
+        """
+        Smart rubric loading:
+        - Default rubric (None) → Load pre-formatted JSON, skip formatter
+        - Uploaded rubric → Use formatter agent with retry
+        """
+
         if rubric_input is None:
-            return load_default_rubric()
+            # Default rubric - already formatted, no agent needed
+            print("  → Using default rubric (pre-formatted JSON)")
+            rubric_data = load_default_rubric()
+
+            # Validate it's already formatted
+            if isinstance(rubric_data, dict) and "criteria" in rubric_data:
+                print("  ✓ Default rubric loaded (formatter agent NOT called)")
+                return rubric_data
+            else:
+                # Shouldn't happen, but handle just in case
+                print("  ⚠ Default rubric not in expected format, using formatter...")
+                return self._format_rubric_with_retry(str(rubric_data), max_retries)
+
         else:
-            return parse_uploaded_rubric(rubric_input)
+            # Custom uploaded rubric - needs formatting
+            print("  → Custom rubric uploaded, calling formatter agent...")
+            raw_rubric = parse_uploaded_rubric(rubric_input)
+
+            # Check if uploaded JSON is already formatted
+            if isinstance(raw_rubric, dict) and "criteria" in raw_rubric:
+                print("  ✓ Uploaded rubric is already formatted (JSON)")
+                return raw_rubric
+            else:
+                # Needs formatting (Excel or unstructured)
+                print("  → Formatting with RubricFormatter agent...")
+                return self._format_rubric_with_retry(str(raw_rubric), max_retries)
 
     def _format_rubric_with_retry(self, raw_rubric: str, max_retries: int = 3) -> dict:
         """
         Format rubric with retry logic for invalid JSON responses.
-        ADK Pattern: Retry with exponential backoff.
+        Only called for custom/uploaded rubrics that need formatting.
         """
+        formatter = self._get_formatter_agent()  # Lazy load
+
         for attempt in range(1, max_retries + 1):
             try:
-                print(f"  → Attempt {attempt}/{max_retries}")
+                print(f"  → Formatting attempt {attempt}/{max_retries}")
 
-                formatted = self.formatter_agent.format_rubric(raw_rubric)
+                formatted = formatter.format_rubric(raw_rubric)
 
                 # Validate structure
                 if not isinstance(formatted, dict) or "criteria" not in formatted:
@@ -164,13 +192,10 @@ class OrchestratorAgent:
     def _score_with_retry(
         self, transcript: str, rubric: dict, duration: int, max_retries: int = 3
     ) -> dict:
-        """
-        Score transcript with retry logic for invalid responses.
-        ADK Pattern: Validate output and retry on format errors.
-        """
+        """Score transcript with retry logic for invalid responses."""
         for attempt in range(1, max_retries + 1):
             try:
-                print(f"  → Attempt {attempt}/{max_retries}")
+                print(f"  → Scoring attempt {attempt}/{max_retries}")
 
                 result = self.scorer_agent.score(transcript, rubric, duration)
 
